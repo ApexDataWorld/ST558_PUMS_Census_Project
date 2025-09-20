@@ -1,0 +1,98 @@
+---
+title: "pums_single_year_data"
+format: html
+editor: visual
+---
+
+## PUMS Census Data
+
+```{r}
+library(httr)
+library(jsonlite)
+library(tibble)   
+
+```
+
+```{r}
+# Build API URL with server‑side filters
+.load_pums_url <- function(year = 2023,
+                           numeric_vars = c("AGEP"),
+                           categorical_vars = c("SEX"),
+                           geography = c("All","Region","Division","State"),
+                           subset = list(),
+                           survey = "acs1",
+                           key = NULL) {
+
+  geography <- match.arg(geography)
+    key_safe  <- if (is.null(key)) "" else as.character(key)
+
+  #TODO add year validation check 
+  # TODO add geo validation check 
+  # TODO add key validation check 
+  
+# Print everything with print()
+print(paste("year =", year))
+print(paste("numeric_vars =", paste(numeric_vars, collapse = ", ")))
+print(paste("categorical_vars =", paste(categorical_vars, collapse = ", ")))
+print(paste("geo =", geo))
+print(paste("subset =", subset))
+print(paste("key =", if (nzchar(key)) "Avaiable" else "Missing"))
+  
+
+# compose GET fields
+get_fields <- unique(c("PWGTP", numeric_vars, categorical_vars))
+params <- list(get = paste(get_fields, collapse = ","))
+
+
+if (nzchar(key_safe)) params$key <- key_safe
+
+base <- paste("https://api.census.gov/data",
+              as.character(year), "acs", survey, "pums", sep = "/")
+
+httr::modify_url(base, query = params)
+
+}
+
+```
+
+```{r}
+# Add comments
+.get_pums_tibble <- function(url, show_call = FALSE) {
+  if (isTRUE(show_call)) print(paste("PUMS URL:", url))
+
+
+  resp <- httr::GET(url)
+  httr::stop_for_status(resp)
+
+  parsed <- jsonlite::fromJSON(rawToChar(resp$content))
+  hdr <- parsed[1, ]
+  df  <- as.data.frame(parsed[-1, ], stringsAsFactors = FALSE, check.names = FALSE)
+  names(df) <- hdr
+  tibble::as_tibble(df, .name_repair = "minimal")
+}
+
+```
+
+```{r}
+year <- 2023
+numeric_vars <- c("AGEP", "JWMNP")
+categorical_vars <- c("SEX")
+geography <- "State"            
+subset <- list(ST = c(37, 36))  
+key <- "2c10d8b7f4f3ca11ddef8ced42f41817fa34d9f7"
+
+url <- .load_pums_url(
+  year = year,
+  numeric_vars = numeric_vars,
+  categorical_vars = categorical_vars,
+  geography = geography,
+  subset = subset,
+  survey = "acs1",
+  key = key
+)
+
+tbl <- .get_pums_tibble(url, show_call = TRUE)
+
+print(tbl)
+
+```
