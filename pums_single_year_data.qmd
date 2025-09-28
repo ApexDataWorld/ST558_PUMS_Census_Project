@@ -9,7 +9,9 @@ editor: visual
 ```{r}
 library(httr)
 library(jsonlite)
-library(tibble)   
+library(tibble)
+library(dplyr)
+library(ggplot2)
 
 ```
 
@@ -26,10 +28,104 @@ library(tibble)
   geography <- match.arg(geography)
     key_safe  <- if (is.null(key)) "" else as.character(key)
 
-  #TODO add year validation check 
-  # TODO add geo validation check 
-  # TODO add key validation check 
-  
+# --- simple constants ---------------------------------------------------------
+.valid_numeric     <- c("AGEP", "GASP", "GRPIP", "JWAP", "JWDP", "JWMNP", "PWGTP")
+.valid_categorical <- c("FER", "HHL", "HISPEED", "JWTRNS", "SCH", "SCHL", "SEX")
+.valid_geos        <- c("All", "Region", "Division", "State")
+
+.valid_region_codes   <- c(1, 2, 3, 4)
+.valid_division_codes <- 1:9
+.valid_state_fips     <- c(
+  1,2,4,5,6,8,9,10,11,12,13,15,16,17,18,19,20,21,22,23,
+  24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,
+  42,44,45,46,47,48,49,50,51,53,54,55,56
+)
+
+# --- year ---------------------------------------------------------------------
+.allowed_year <- function(x) {
+  is.numeric(x) && length(x) == 1L && !is.na(x) && x >= 2010 && x <= 2022
+}
+
+validate_year <- function(year) {
+  if (!.allowed_year(year)) stop("year must be a single number in 2010..2022")
+  as.integer(year)
+}
+
+# --- variables ----------------------------------------------------------------
+process_numeric_vars <- function(numeric_vars = c("AGEP", "PWGTP")) {
+  if (!is.character(numeric_vars)) stop("numeric_vars must be character")
+
+  # ensure PWGTP present
+  if (!"PWGTP" %in% numeric_vars) numeric_vars <- c(numeric_vars, "PWGTP")
+
+  # check allowed
+  if (!all(numeric_vars %in% .valid_numeric))
+    stop("numeric_vars contains invalid names")
+
+  # need at least one other than PWGTP
+  others <- setdiff(numeric_vars, "PWGTP")
+  if (length(others) == 0) stop("include at least one numeric var other than PWGTP")
+
+  unique(numeric_vars)
+}
+
+process_categorical_vars <- function(categorical_vars = c("SEX")) {
+  if (!is.character(categorical_vars)) stop("categorical_vars must be character")
+  if (!all(categorical_vars %in% .valid_categorical))
+    stop("categorical_vars contains invalid names")
+  unique(categorical_vars)
+}
+
+# --- geography ----------------------------------------------------------------
+validate_geo <- function(geography) {
+  if (!is.character(geography) || length(geography) != 1L)
+    stop("geography must be a single string")
+  if (!(geography %in% .valid_geos))
+    stop("geography must be one of All, Region, Division, State")
+  geography
+}
+
+# --- subset -------------------------------------------------------------------
+# subset like: list(REGION = c(1,2), DIVISION = 9, ST = c(36,42))
+validate_subset <- function(subset, geography) {
+  if (is.null(subset) || identical(subset, list())) return(list())
+
+  if (!is.list(subset) || is.null(names(subset)))
+    stop("subset must be a named list")
+
+  allowed_keys <- c("REGION", "DIVISION", "ST")
+  bad <- setdiff(names(subset), allowed_keys)
+  if (length(bad) > 0) stop("subset has invalid names")
+
+  # coerce to integer and dedupe
+  subset <- lapply(subset, function(v) unique(as.integer(v)))
+
+  # light checks
+  if (!is.null(subset$REGION)) {
+    if (any(is.na(subset$REGION)) || any(!subset$REGION %in% .valid_region_codes))
+      stop("REGION must be in 1,2,3,4")
+  }
+  if (!is.null(subset$DIVISION)) {
+    if (any(is.na(subset$DIVISION)) || any(!subset$DIVISION %in% .valid_division_codes))
+      stop("DIVISION must be in 1..9")
+  }
+  if (!is.null(subset$ST)) {
+    if (any(is.na(subset$ST)) || any(!subset$ST %in% .valid_state_fips))
+      stop("ST must be valid 2-digit state FIPS")
+  }
+
+  # keep it consistent with chosen geography
+  if (geography == "Region"  && any(c("DIVISION","ST") %in% names(subset)))
+    stop("for Region, only use REGION")
+  if (geography == "Division" && any(c("REGION","ST") %in% names(subset)))
+    stop("for Division, only use DIVISION")
+  if (geography == "State"   && any(c("REGION","DIVISION") %in% names(subset)))
+    stop("for State, only use ST")
+
+  subset
+}
+
+
 # Print everything with print()
 print(paste("year =", year))
 print(paste("numeric_vars =", paste(numeric_vars, collapse = ", ")))
