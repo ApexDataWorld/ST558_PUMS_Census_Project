@@ -7,156 +7,238 @@ editor: visual
 ## PUMS Census Data
 
 ```{r}
+
 library(httr)
 library(jsonlite)
 library(tibble)
 library(dplyr)
 library(ggplot2)
+library(tidyr)
+library(readr)
+library(hms)
+library(lubridate)
+
 
 ```
 
 ```{r}
-# Build API URL with server‑side filters
-.load_pums_url <- function(year = 2023,
+.load_pums_url <- function(year = 2022,
                            numeric_vars = c("AGEP"),
                            categorical_vars = c("SEX"),
-                           geography = c("All","Region","Division","State"),
-                           subset = list(),
+                           geography_level = "All",
+                           geography_subset = NULL,
                            survey = "acs1",
                            key = NULL) {
 
-  geography <- match.arg(geography)
-    key_safe  <- if (is.null(key)) "" else as.character(key)
+  key_safe <- if (is.null(key)) "" else as.character(key)
 
-# --- simple constants ---------------------------------------------------------
-.valid_numeric     <- c("AGEP", "GASP", "GRPIP", "JWAP", "JWDP", "JWMNP", "PWGTP")
-.valid_categorical <- c("FER", "HHL", "HISPEED", "JWTRNS", "SCH", "SCHL", "SEX")
-.valid_geos        <- c("All", "Region", "Division", "State")
+  # --- valid vars ---------------------------------------------------------------
+  .valid_numeric     <- c("AGEP", "GASP", "GRPIP", "JWAP", "JWDP", "JWMNP", "PWGTP")
+  .valid_categorical <- c("FER", "HHL", "HISPEED", "JWTRNS", "SCH", "SCHL", "SEX")
+  .valid_geos        <- c("All", "Region", "Division", "State")
 
-.valid_region_codes   <- c(1, 2, 3, 4)
-.valid_division_codes <- 1:9
-.valid_state_fips     <- c(
-  1,2,4,5,6,8,9,10,11,12,13,15,16,17,18,19,20,21,22,23,
-  24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,
-  42,44,45,46,47,48,49,50,51,53,54,55,56
-)
-
-# --- year ---------------------------------------------------------------------
-.allowed_year <- function(x) {
-  is.numeric(x) && length(x) == 1L && !is.na(x) && x >= 2010 && x <= 2022
-}
-
-#Added new version of function
-validate_year <- function(year) {
-  #creating a function to validate year
-  if (!(is.numeric(year) && length(year) == 1L && !is.na(year) && year >= 2010 && year <= 2022)) {
-    #this will throw an error if a year entered is not in range
-    stop("year must be a single number in 2010..2022", call. = FALSE)
+  # --- year check ---------------------------------------------------------------
+  validate_year <- function(year) {
+    if (!(is.numeric(year) && length(year) == 1L && !is.na(year) &&
+          year >= 2010 && year <= 2022)) {
+      stop("year must be a single number in 2010..2022", call. = FALSE)
+    }
+    as.integer(year)
   }
-  #outputs year in integer format
-  as.integer(year)
-}
+  year <- validate_year(year)
 
-
-
-
-# --- variables ----------------------------------------------------------------
-process_numeric_vars <- function(numeric_vars = c("AGEP", "PWGTP")) {
-  if (!is.character(numeric_vars)) stop("numeric_vars must be character")
-
-  # ensure PWGTP present
+  # --- variable checks ----------------------------------------------------------
   if (!"PWGTP" %in% numeric_vars) numeric_vars <- c(numeric_vars, "PWGTP")
-
-  # check allowed
   if (!all(numeric_vars %in% .valid_numeric))
     stop("numeric_vars contains invalid names")
-
-  # need at least one other than PWGTP
-  others <- setdiff(numeric_vars, "PWGTP")
-  if (length(others) == 0) stop("include at least one numeric var other than PWGTP")
-
-  unique(numeric_vars)
-}
-
-process_categorical_vars <- function(categorical_vars = c("SEX")) {
-  if (!is.character(categorical_vars)) stop("categorical_vars must be character")
   if (!all(categorical_vars %in% .valid_categorical))
     stop("categorical_vars contains invalid names")
-  unique(categorical_vars)
-}
 
-# --- geography ----------------------------------------------------------------
-validate_geo <- function(geography) {
-  if (!is.character(geography) || length(geography) != 1L)
-    stop("geography must be a single string")
-  if (!(geography %in% .valid_geos))
-    stop("geography must be one of All, Region, Division, State")
-  geography
-}
+  # --- geography check ----------------------------------------------------------
+  if (!(geography_level %in% .valid_geos))
+    stop("geography_level must be one of All, Region, Division, State")
 
-# --- subset -------------------------------------------------------------------
-# subset like: list(REGION = c(1,2), DIVISION = 9, ST = c(36,42))
-validate_subset <- function(subset, geography) {
-  if (is.null(subset) || identical(subset, list())) return(list())
-
-  if (!is.list(subset) || is.null(names(subset)))
-    stop("subset must be a named list")
-
-  allowed_keys <- c("REGION", "DIVISION", "ST")
-  bad <- setdiff(names(subset), allowed_keys)
-  if (length(bad) > 0) stop("subset has invalid names")
-
-  # coerce to integer and dedupe
-  subset <- lapply(subset, function(v) unique(as.integer(v)))
-
-  # light checks
-  if (!is.null(subset$REGION)) {
-    if (any(is.na(subset$REGION)) || any(!subset$REGION %in% .valid_region_codes))
-      stop("REGION must be in 1,2,3,4")
-  }
-  if (!is.null(subset$DIVISION)) {
-    if (any(is.na(subset$DIVISION)) || any(!subset$DIVISION %in% .valid_division_codes))
-      stop("DIVISION must be in 1..9")
-  }
-  if (!is.null(subset$ST)) {
-    if (any(is.na(subset$ST)) || any(!subset$ST %in% .valid_state_fips))
-      stop("ST must be valid 2-digit state FIPS")
+  # --- subset -------------------------------------------------------------------
+  subset <- geography_subset
+  if (!is.null(subset)) {
+    if (!is.list(subset) || is.null(names(subset)))
+      stop("geography_subset must be a named list")
+    # You can expand validate_subset checks here if needed
   }
 
-  # keep it consistent with chosen geography
-  if (geography == "Region"  && any(c("DIVISION","ST") %in% names(subset)))
-    stop("for Region, only use REGION")
-  if (geography == "Division" && any(c("REGION","ST") %in% names(subset)))
-    stop("for Division, only use DIVISION")
-  if (geography == "State"   && any(c("REGION","DIVISION") %in% names(subset)))
-    stop("for State, only use ST")
+  # --- print for debugging ------------------------------------------------------
+  print(paste("year =", year))
+  print(paste("numeric_vars =", paste(numeric_vars, collapse = ", ")))
+  print(paste("categorical_vars =", paste(categorical_vars, collapse = ", ")))
+  print(paste("geo =", geography_level))
+  print(paste("subset =", paste(capture.output(str(subset)), collapse = " ")))
+  print(paste("key =", if (nzchar(key_safe)) "Available" else "Missing"))
 
-  subset
+  # --- compose GET fields -------------------------------------------------------
+  get_fields <- unique(c("PWGTP", numeric_vars, categorical_vars))
+  params <- list(get = paste(get_fields, collapse = ","))
+
+  if (nzchar(key_safe)) params$key <- key_safe
+
+  base <- paste("https://api.census.gov/data",
+                as.character(year), "acs", survey, "pums", sep = "/")
+
+  httr::modify_url(base, query = params)
 }
 
 
-# Print everything with print()
-print(paste("year =", year))
-print(paste("numeric_vars =", paste(numeric_vars, collapse = ", ")))
-print(paste("categorical_vars =", paste(categorical_vars, collapse = ", ")))
-print(paste("geo =", geo))
-print(paste("subset =", subset))
-print(paste("key =", if (nzchar(key)) "Avaiable" else "Missing"))
+```
+
+```{r}
+process_api_response <- function(api_response) {
+  if (api_response$status_code != 200) {
+    stop("Error: API request failed with status code ", api_response$status_code)
+  }
+
+  # Convert raw content to character string
+  content_string <- rawToChar(api_response$content)
   
+  # Parse JSON data
+  parsed_data <- fromJSON(content_string)
+  
+  # First row contains column names, the rest is the data
+  column_names <- parsed_data[1, ]
+  data_rows <- parsed_data[-1, ]
+  
+  # Convert to tibble
+  tibble_data <- as_tibble(data_rows)
+  colnames(tibble_data) <- column_names
+  
+  #creating new variable in order to check if variables are numeric
+  valid_numeric_vars <- c("AGEP", "GASP", "GRPIP", "JWAP", "JWDP", "JWMNP", "PWGTP")
+   
+  #Created loop to convert proper numeric variables to numeric
+  for(var in colnames(tibble_data)){
+    if(var %in% valid_numeric_vars){
+      tibble_data[[var]] <- as.numeric(tibble_data[[var]])
+    }
+  }
+  
+  # --- categorical to factors ---------------------------------------------------
+  valid_categorical_vars <- c("FER", "HHL", "HISPEED", "JWTRNS", "SCH", "SCHL", "SEX")
+  for (var in colnames(tibble_data)) {
+    if (var %in% valid_categorical_vars) {
+      tibble_data[[var]] <- as.factor(tibble_data[[var]])
+    }
+  }
 
-# compose GET fields
-get_fields <- unique(c("PWGTP", numeric_vars, categorical_vars))
-params <- list(get = paste(get_fields, collapse = ","))
+  # --- labeled factors ----------------------------------------------------------
+  if ("SEX" %in% colnames(tibble_data)) {
+    tibble_data <- tibble_data |> mutate(SEX = factor(SEX, labels = SEX_levels))
+  }
+  if ("SCHL" %in% colnames(tibble_data)) {
+    tibble_data <- tibble_data |> mutate(SCHL = factor(SCHL, labels = SCHL_levels))
+  }
+  if ("SCH" %in% colnames(tibble_data)) {
+    tibble_data <- tibble_data |> mutate(SCH = factor(SCH, labels = SCH_levels))
+  }
+  if ("JWTRNS" %in% colnames(tibble_data)) {
+    tibble_data <- tibble_data |> mutate(JWTRNS = factor(JWTRNS, labels = JWTRNS_levels))
+  }
+  if ("HISPEED" %in% colnames(tibble_data)) {
+    tibble_data <- tibble_data |> mutate(HISPEED = factor(HISPEED, labels = HISPEED_levels))
+  }
+  if ("HHL" %in% colnames(tibble_data)) {
+    tibble_data <- tibble_data |> mutate(HHL = factor(HHL, labels = HHL_levels))
+  }
+  if ("FER" %in% colnames(tibble_data)) {
+    tibble_data <- tibble_data |> mutate(FER = factor(FER, labels = FER_levels))
+  }
 
+  # --- JWAP / JWDP handling -----------------------------------------------------
+  if("JWAP" %in% colnames(tibble_data)) {
+  tibble_data <- tibble_data |>
+   left_join(JWAP_intervals, join_by(JWAP)) |>
+    rename(work_arrival_time = middle_time,
+           arrival_meridiem = meridiem) |>
+    select(-JWAP)
+  } 
+  
+  #Pasting correct time values in for JWDP
+   if("JWDP" %in% colnames(tibble_data)) {
+  tibble_data <- tibble_data |>
+   left_join(JWDP_intervals, join_by(JWDP)) |>
+    rename(work_departure_time = middle_time2,
+           departure_meridiem = meridiem2) |>
+    select(-JWDP)
+  } 
 
-if (nzchar(key_safe)) params$key <- key_safe
-
-base <- paste("https://api.census.gov/data",
-              as.character(year), "acs", survey, "pums", sep = "/")
-
-httr::modify_url(base, query = params)
-
+  return(tibble_data)
 }
+
+```
+
+```{r}
+# Function to process time variables
+process_time_variable <- function(variable_name) {
+ 
+   # Grabbing information from API
+  temp <- httr::GET(paste0("https://api.census.gov/data/2022/acs/acs1/pums/variables/", variable_name, ".json"))
+  temp_list <- temp$content |> rawToChar() |> jsonlite::fromJSON()
+  
+  # Getting just the variable names and their values
+  time_values <- temp_list$values$item
+  time_vals_sorted <- time_values[sort(names(time_values))]
+  
+  # Converting the values into a tibble
+  time_tibble <- tibble(id = seq(0, length(time_vals_sorted) - 1), value = time_vals_sorted)
+  
+  # Converting to wide format
+  time_wide <- separate_wider_delim(time_tibble, 
+                                     cols = c("value"), 
+                                     delim = " ", 
+                                     names = c("start", "meridiem", "to", "end", "meridiem_2"), 
+                                     too_few = "debug", 
+                                     names_repair = "unique", 
+                                     too_many = "drop") 
+  
+  # Select the needed rows and convert to usable format
+  time_intervals <- time_wide |>
+    select(id, start, meridiem, end, meridiem_2) |> #meridiem is to track if values were for am or pm
+    mutate(start = parse_hm(start),
+           end = parse_hm(end),
+           variable_name = id)  
+  
+  # Make row 1 display NA across all columns for row 1    
+  time_intervals[1, ] <- NA
+  
+  # Creating middle time value variable
+  time_intervals <- time_intervals |>
+    mutate(interval = (end - start) / 2,
+           interval = as.numeric(interval),
+           interval = as.period(interval))
+
+  # Turning start into a period   
+  time_intervals <- time_intervals |>
+    mutate(start = as.period(start),
+           middle_time = as.duration(start + interval)) |>
+    select(middle_time, variable_name, meridiem) 
+  
+  # Turning the first row variable back to 0
+  time_intervals[1, 2] <- 0
+          
+  # Converting back to a time variable        
+  time_intervals <- time_intervals |>
+    mutate(middle_time = hms::hms(seconds = middle_time))
+  
+  return(time_intervals)
+} 
+
+#Renaming variables to insure they work in the helper function
+JWAP_intervals <- process_time_variable("JWAP")
+JWAP_intervals <- JWAP_intervals |>
+  rename(JWAP = variable_name)
+         
+JWDP_intervals <- process_time_variable("JWDP")
+JWDP_intervals <- JWDP_intervals |>
+  rename(JWDP = variable_name,
+         middle_time2 = middle_time,
+         meridiem2 = meridiem)
 
 ```
 
@@ -164,7 +246,6 @@ httr::modify_url(base, query = params)
 # Add comments
 .get_pums_tibble <- function(url, show_call = FALSE) {
   if (isTRUE(show_call)) print(paste("PUMS URL:", url))
-
 
   resp <- httr::GET(url)
   httr::stop_for_status(resp)
@@ -176,10 +257,11 @@ httr::modify_url(base, query = params)
   tibble::as_tibble(df, .name_repair = "minimal")
 }
 
+
 ```
 
 ```{r}
-year <- 2023
+year <- 2022
 numeric_vars <- c("AGEP", "JWMNP")
 categorical_vars <- c("SEX")
 geography <- "State"            
@@ -190,8 +272,8 @@ url <- .load_pums_url(
   year = year,
   numeric_vars = numeric_vars,
   categorical_vars = categorical_vars,
-  geography = geography,
-  subset = subset,
+  geography_level = geography,
+  geography_subset = subset,
   survey = "acs1",
   key = key
 )
@@ -199,5 +281,6 @@ url <- .load_pums_url(
 tbl <- .get_pums_tibble(url, show_call = TRUE)
 
 print(tbl)
+
 
 ```
