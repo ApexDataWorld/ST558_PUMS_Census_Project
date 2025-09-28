@@ -219,3 +219,93 @@ tbl <- .get_pums_tibble(url, show_call = TRUE)
 print(tbl)
 
 ```
+
+{r}
+# Function for multiple years
+query_multiple_years <- function(
+    years,
+    numeric_vars = c("AGEP", "PWGTP"),
+    categorical_vars = c("SEX"),
+    geography_level = "All",
+    geography_subset = NULL,
+    survey = "acs1",
+    key = NULL
+) {
+  all_years_data <- list()
+ 
+  for (yr in years) {
+    # validate year inside loop
+    if (yr < 2010 || yr > 2022) {
+      warning(paste("Skipping invalid year:", yr))
+      next
+    }
+   
+    # Build URL for single year
+    url <- .load_pums_url(
+      year = yr,
+      numeric_vars = numeric_vars,
+      categorical_vars = categorical_vars,
+      geography_level = geography_level,
+      geography_subset = geography_subset,
+      survey = survey,
+      key = key
+    )
+   
+    # Fetch tibble for this year
+    tbl <- .get_pums_tibble(url, show_call = TRUE)
+   
+    # Add year column so you know which year rows came from
+    tbl$year <- yr
+   
+    # Save in list
+    all_years_data[[as.character(yr)]] <- tbl
+  }
+ 
+  # Combine into single tibble
+  final_data <- bind_rows(all_years_data)
+  class(final_data) <- c("census", class(final_data))
+ 
+  return(final_data)
+}
+
+{r}
+year <- c( 2016, 2017, 2018)
+numeric_vars <- c("AGEP", "PWGTP", "JWAP", "GRPIP" )
+categorical_vars <- c("SEX", "HISPEED", "SCH", "FER")
+geography <- "State"            
+subset <- list(ST = c(37, 36))  
+key <- "2c10d8b7f4f3ca11ddef8ced42f41817fa34d9f7"
+
+url <- query_multiple_years(
+  year = year,
+  numeric_vars = numeric_vars,
+  categorical_vars = categorical_vars,
+  geography_level = geography,
+  geography_subset = subset,
+  survey = "acs1",
+  key = key
+)
+
+tbl <- .get_pums_tibble(url, show_call = TRUE)
+
+print(tbl)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
