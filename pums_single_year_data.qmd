@@ -46,10 +46,19 @@ library(ggplot2)
   is.numeric(x) && length(x) == 1L && !is.na(x) && x >= 2010 && x <= 2022
 }
 
+#Added new version of function
 validate_year <- function(year) {
-  if (!.allowed_year(year)) stop("year must be a single number in 2010..2022")
+  #creating a function to validate year
+  if (!(is.numeric(year) && length(year) == 1L && !is.na(year) && year >= 2010 && year <= 2022)) {
+    #this will throw an error if a year entered is not in range
+    stop("year must be a single number in 2010..2022", call. = FALSE)
+  }
+  #outputs year in integer format
   as.integer(year)
 }
+
+
+
 
 # --- variables ----------------------------------------------------------------
 process_numeric_vars <- function(numeric_vars = c("AGEP", "PWGTP")) {
