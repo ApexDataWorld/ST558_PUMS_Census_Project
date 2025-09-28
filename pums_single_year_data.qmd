@@ -4,7 +4,27 @@ format: html
 editor: visual
 ---
 
-## PUMS Census Data
+## Abstract
+
+The American Community Survey's Public Use Microdata Sample (ACS PUMS) via the Census API releases data that we want to develop into a robust and reprodubicle pipeline for aquiring person-level data. We want to functionalize the process so we can repeat the API calls and return them in a clean and useable format. We construct a pipeline, inhest the JSON formatted data into a tabluar format suitable for downstream web based graphics in an automated fashion.
+
+We approach this through three pillars:
+1) Validation
+2) API subsetting of data
+3) Functionalization of Component Code
+
+
+## What are we Building
+
+
+## Assumptions and Data Guardrails
+
+
+
+
+##
+
+
 
 ```{r}
 library(httr)
@@ -56,8 +76,6 @@ validate_year <- function(year) {
   #outputs year in integer format
   as.integer(year)
 }
-
-
 
 
 # --- variables ----------------------------------------------------------------
