@@ -4,7 +4,17 @@ format: html
 editor: visual
 ---
 
-## PUMS Census Data
+## Abstract
+
+The American Community Survey's Public Use Microdata Sample (ACS PUMS) via the Census API releases data that we want to develop into a robust and reprodubicle pipeline for aquiring person-level data. We want to functionalize the process so we can repeat the API calls and return them in a clean and useable format. We construct a pipeline, inhest the JSON formatted data into a tabluar format suitable for downstream web based graphics in an automated fashion.
+
+We approach this through three pillars: 1) Validation 2) API subsetting of data 3) Functionalization of Component Code
+
+## What are we Building
+
+## Assumptions and Data Guardrails
+
+## 
 
 ```{r}
 
@@ -22,69 +32,147 @@ library(lubridate)
 ```
 
 ```{r}
-.load_pums_url <- function(year = 2022,
+# Build API URL with server‑side filters
+.load_pums_url <- function(year = 2023,
                            numeric_vars = c("AGEP"),
                            categorical_vars = c("SEX"),
-                           geography_level = "All",
-                           geography_subset = NULL,
+                           geography_level = c("All","Region","Division","State"),
+                           geography_subset = list(),
                            survey = "acs1",
                            key = NULL) {
 
-  key_safe <- if (is.null(key)) "" else as.character(key)
+  geography <- match.arg(geography_level)
+  subset    <- geography_subset
+  key_safe  <- if (is.null(key)) "" else as.character(key)
 
-  # --- valid vars ---------------------------------------------------------------
-  .valid_numeric     <- c("AGEP", "GASP", "GRPIP", "JWAP", "JWDP", "JWMNP", "PWGTP")
-  .valid_categorical <- c("FER", "HHL", "HISPEED", "JWTRNS", "SCH", "SCHL", "SEX")
-  .valid_geos        <- c("All", "Region", "Division", "State")
+# --- simple constants ---------------------------------------------------------
+.valid_numeric     <- c("AGEP", "GASP", "GRPIP", "JWAP", "JWDP", "JWMNP", "PWGTP")
+.valid_categorical <- c("FER", "HHL", "HISPEED", "JWTRNS", "SCH", "SCHL", "SEX")
+.valid_geos        <- c("All", "Region", "Division", "State")
 
-  # --- year check ---------------------------------------------------------------
-  validate_year <- function(year) {
-    if (!(is.numeric(year) && length(year) == 1L && !is.na(year) &&
-          year >= 2010 && year <= 2022)) {
-      stop("year must be a single number in 2010..2022", call. = FALSE)
-    }
-    as.integer(year)
+.valid_region_codes   <- c(1, 2, 3, 4)
+.valid_division_codes <- 1:9
+.valid_state_fips     <- c(
+  1,2,4,5,6,8,9,10,11,12,13,15,16,17,18,19,20,21,22,23,
+  24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,
+  42,44,45,46,47,48,49,50,51,53,54,55,56
+)
+
+# --- year ---------------------------------------------------------------------
+.allowed_year <- function(x) {
+  is.numeric(x) && length(x) == 1L && !is.na(x) && x >= 2010 && x <= 2022
+}
+
+#Added new version of function
+validate_year <- function(year) {
+  #creating a function to validate year
+  if (!(is.numeric(year) && length(year) == 1L && !is.na(year) && year >= 2010 && year <= 2022)) {
+    #this will throw an error if a year entered is not in range
+    stop("year must be a single number in 2010..2022", call. = FALSE)
   }
-  year <- validate_year(year)
+  #outputs year in integer format
+  as.integer(year)
+}
 
-  # --- variable checks ----------------------------------------------------------
+
+# --- variables ----------------------------------------------------------------
+process_numeric_vars <- function(numeric_vars = c("AGEP", "PWGTP")) {
+  if (!is.character(numeric_vars)) stop("numeric_vars must be character")
+
+  # ensure PWGTP present
   if (!"PWGTP" %in% numeric_vars) numeric_vars <- c(numeric_vars, "PWGTP")
+
+  # check allowed
   if (!all(numeric_vars %in% .valid_numeric))
     stop("numeric_vars contains invalid names")
+
+  # need at least one other than PWGTP
+  others <- setdiff(numeric_vars, "PWGTP")
+  if (length(others) == 0) stop("include at least one numeric var other than PWGTP")
+
+  unique(numeric_vars)
+}
+
+process_categorical_vars <- function(categorical_vars = c("SEX")) {
+  if (!is.character(categorical_vars)) stop("categorical_vars must be character")
   if (!all(categorical_vars %in% .valid_categorical))
     stop("categorical_vars contains invalid names")
+  unique(categorical_vars)
+}
 
-  # --- geography check ----------------------------------------------------------
-  if (!(geography_level %in% .valid_geos))
-    stop("geography_level must be one of All, Region, Division, State")
+# --- geography ----------------------------------------------------------------
+validate_geo <- function(geography) {
+  if (!is.character(geography) || length(geography) != 1L)
+    stop("geography must be a single string")
+  if (!(geography %in% .valid_geos))
+    stop("geography must be one of All, Region, Division, State")
+  geography
+}
 
-  # --- subset -------------------------------------------------------------------
-  subset <- geography_subset
-  if (!is.null(subset)) {
-    if (!is.list(subset) || is.null(names(subset)))
-      stop("geography_subset must be a named list")
-    # You can expand validate_subset checks here if needed
+# --- subset -------------------------------------------------------------------
+# subset like: list(REGION = c(1,2), DIVISION = 9, ST = c(36,42))
+validate_subset <- function(subset, geography) {
+  if (is.null(subset) || identical(subset, list())) return(list())
+
+  if (!is.list(subset) || is.null(names(subset)))
+    stop("subset must be a named list")
+
+  allowed_keys <- c("REGION", "DIVISION", "ST")
+  bad <- setdiff(names(subset), allowed_keys)
+  if (length(bad) > 0) stop("subset has invalid names")
+
+  # coerce to integer and dedupe
+  subset <- lapply(subset, function(v) unique(as.integer(v)))
+
+  # light checks
+  if (!is.null(subset$REGION)) {
+    if (any(is.na(subset$REGION)) || any(!subset$REGION %in% .valid_region_codes))
+      stop("REGION must be in 1,2,3,4")
+  }
+  if (!is.null(subset$DIVISION)) {
+    if (any(is.na(subset$DIVISION)) || any(!subset$DIVISION %in% .valid_division_codes))
+      stop("DIVISION must be in 1..9")
+  }
+  if (!is.null(subset$ST)) {
+    if (any(is.na(subset$ST)) || any(!subset$ST %in% .valid_state_fips))
+      stop("ST must be valid 2-digit state FIPS")
   }
 
-  # --- print for debugging ------------------------------------------------------
-  print(paste("year =", year))
-  print(paste("numeric_vars =", paste(numeric_vars, collapse = ", ")))
-  print(paste("categorical_vars =", paste(categorical_vars, collapse = ", ")))
-  print(paste("geo =", geography_level))
-  print(paste("subset =", paste(capture.output(str(subset)), collapse = " ")))
-  print(paste("key =", if (nzchar(key_safe)) "Available" else "Missing"))
+  # keep it consistent with chosen geography
+  if (geography == "Region"  && any(c("DIVISION","ST") %in% names(subset)))
+    stop("for Region, only use REGION")
+  if (geography == "Division" && any(c("REGION","ST") %in% names(subset)))
+    stop("for Division, only use DIVISION")
+  if (geography == "State"   && any(c("REGION","DIVISION") %in% names(subset)))
+    stop("for State, only use ST")
 
-  # --- compose GET fields -------------------------------------------------------
-  get_fields <- unique(c("PWGTP", numeric_vars, categorical_vars))
-  params <- list(get = paste(get_fields, collapse = ","))
-
-  if (nzchar(key_safe)) params$key <- key_safe
-
-  base <- paste("https://api.census.gov/data",
-                as.character(year), "acs", survey, "pums", sep = "/")
-
-  httr::modify_url(base, query = params)
+  subset
 }
+
+
+# Print everything with print()
+print(paste("year =", year))
+print(paste("numeric_vars =", paste(numeric_vars, collapse = ", ")))
+print(paste("categorical_vars =", paste(categorical_vars, collapse = ", ")))
+print(paste("geo =", geo))
+print(paste("subset =", subset))
+print(paste("key =", if (nzchar(key)) "Avaiable" else "Missing"))
+  
+
+# compose GET fields
+get_fields <- unique(c("PWGTP", numeric_vars, categorical_vars))
+params <- list(get = paste(get_fields, collapse = ","))
+
+
+if (nzchar(key_safe)) params$key <- key_safe
+
+base <- paste("https://api.census.gov/data",
+              as.character(year), "acs", survey, "pums", sep = "/")
+
+httr::modify_url(base, query = params)
+
+}
+
 
 
 ```
@@ -282,5 +370,80 @@ tbl <- .get_pums_tibble(url, show_call = TRUE)
 
 print(tbl)
 
+
+```
+
+```{r}
+# Function for multiple years
+query_multiple_years <- function(
+    years,
+    numeric_vars = c("AGEP", "PWGTP"),
+    categorical_vars = c("SEX"),
+    geography_level = "All",
+    geography_subset = NULL,
+    survey = "acs1",
+    key = NULL
+) {
+  all_years_data <- list()
+ 
+  for (yr in years) {
+    # validate year inside loop
+    if (yr < 2010 || yr > 2022) {
+      warning(paste("Skipping invalid year:", yr))
+      next
+    }
+   
+    # Build URL for single year
+    url <- .load_pums_url(
+      year = yr,
+      numeric_vars = numeric_vars,
+      categorical_vars = categorical_vars,
+      geography_level = geography_level,
+      geography_subset = geography_subset,
+      survey = survey,
+      key = key
+    )
+   
+    # Fetch tibble for this year
+    tbl <- .get_pums_tibble(url, show_call = TRUE)
+   
+    # Add year column so you know which year rows came from
+    tbl$year <- yr
+   
+    # Save in list
+    all_years_data[[as.character(yr)]] <- tbl
+  }
+ 
+  # Combine into single tibble
+  final_data <- bind_rows(all_years_data)
+  class(final_data) <- c("census", class(final_data))
+ 
+  return(final_data)
+}
+
+```
+
+```{r}
+#year <- c( 2016, 2017, 2018)
+year <- c( 2016)
+numeric_vars <- c("AGEP", "PWGTP", "JWAP", "GRPIP" )
+categorical_vars <- c("SEX", "HISPEED", "SCH", "FER")
+geography <- "State"            
+subset <- list(ST = c(37, 36))  
+key <- "2c10d8b7f4f3ca11ddef8ced42f41817fa34d9f7"
+
+url <- query_multiple_years(
+  year = year,
+  numeric_vars = numeric_vars,
+  categorical_vars = categorical_vars,
+  geography_level = geography,
+  geography_subset = subset,
+  survey = "acs1",
+  key = key
+)
+
+tbl <- .get_pums_tibble(url, show_call = TRUE)
+
+print(tbl)
 
 ```
