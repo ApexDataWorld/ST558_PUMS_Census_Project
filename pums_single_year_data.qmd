@@ -154,7 +154,7 @@ validate_subset <- function(subset, geography) {
 print(paste("year =", year))
 print(paste("numeric_vars =", paste(numeric_vars, collapse = ", ")))
 print(paste("categorical_vars =", paste(categorical_vars, collapse = ", ")))
-print(paste("geo =", geo))
+print(paste("geo =", geography))
 print(paste("subset =", subset))
 print(paste("key =", if (nzchar(key)) "Avaiable" else "Missing"))
   
@@ -425,14 +425,14 @@ query_multiple_years <- function(
 
 ```{r}
 #year <- c( 2016, 2017, 2018)
-year <- c( 2016)
+year <- c( 2016, 2017)
 numeric_vars <- c("AGEP", "PWGTP", "JWAP", "GRPIP" )
 categorical_vars <- c("SEX", "HISPEED", "SCH", "FER")
 geography <- "State"            
 subset <- list(ST = c(37, 36))  
 key <- "2c10d8b7f4f3ca11ddef8ced42f41817fa34d9f7"
 
-url <- query_multiple_years(
+multi_year_result <- query_multiple_years(
   year = year,
   numeric_vars = numeric_vars,
   categorical_vars = categorical_vars,
@@ -446,4 +446,87 @@ tbl <- .get_pums_tibble(url, show_call = TRUE)
 
 print(tbl)
 
+```
+
+```{r}
+# Define custom summary function for the 'census' class
+summary.census <- function(census_data, 
+                           numeric_vars = NULL, 
+                           categorical_vars = NULL) {
+  
+  # Ensure PWGTP exists and is numeric
+  if (!"PWGTP" %in% names(census_data)) {
+    stop("Weight variable 'PWGTP' is missing from the dataset.")
+  }
+  
+  # Separate numeric and categorical columns from the data
+  if (is.null(numeric_vars)) {
+    numeric_vars <- names(census_data)[sapply(census_data, is.numeric) & names(census_data) != "PWGTP"]
+  }
+  
+  if (is.null(categorical_vars)) {
+    categorical_vars <- names(census_data)[sapply(census_data, is.factor)]
+  }
+  # Weighted mean and standard deviation calculations
+  summarize_numeric <- function(var_name, data) {
+    numeric_vector <- as.numeric(data[[var_name]])
+    weight_vector <- as.numeric(data[["PWGTP"]])
+    
+    # Check for missing values in the weight vector
+    if (any(is.na(weight_vector))) {
+      stop("Missing values found in the weight variable 'PWGTP'.")
+    }
+    
+    # Calculate weighted mean
+    weighted_mean <- sum(numeric_vector * weight_vector, na.rm = TRUE) / sum(weight_vector, na.rm = TRUE)
+    
+    # Calculate weighted standard deviation
+    weighted_var <- sum(numeric_vector^2 * weight_vector, na.rm = TRUE) / sum(weight_vector, na.rm = TRUE)
+    weighted_sd <- sqrt(weighted_var - weighted_mean^2)
+    
+    return(list(mean = weighted_mean, sd = weighted_sd))
+  }
+  
+  # Initialize a list to store the summary results
+  summary_list <- list()
+  
+  # Summarize numeric variables
+  for (var in numeric_vars) {
+    summary_list[[var]] <- summarize_numeric(var, census_data)
+  }
+  
+  # Summarize categorical variables (counts)
+  for (var in categorical_vars) {
+    summary_list[[var]] <- table(census_data[[var]], useNA = "ifany")
+  }
+  
+  return(summary_list)
+}
+```
+
+```{r}
+#Creating function for user to create weighted box plots
+plot.census <- function(tibble_data, categorical_var, numeric_var) {
+  
+  #Telling user they must specify at least one categorical variable
+  if (missing(categorical_var) || missing(numeric_var)){
+    stop("Must include one categorical variable and one numeric variable")
+  }
+  #Telling user time variables can not be use as numeric variables
+  if ("JWAP" %in% numeric_var){
+    stop("JWAP is a time variable")
+  }
+   if ("JWDP" %in% numeric_var){
+    stop("JWDP is a time variable")
+  }
+  
+  p <- ggplot(tibble_data, 
+              aes(x = get(categorical_var), y = get(numeric_var), weight = PWGTP)) + geom_boxplot() + 
+                labs(title = paste("Box plot of", deparse(substitute(categorical_var)), "by", deparse(substitute(numeric_var))), x = categorical_var, y = numeric_var) + theme_light() 
+  
+  print(p)
+}
+
+#Plot example
+plot.census(multi_year_result, "SEX", "AGEP")
 ```
