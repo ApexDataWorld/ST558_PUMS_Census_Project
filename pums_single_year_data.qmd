@@ -331,6 +331,35 @@ JWDP_intervals <- JWDP_intervals |>
 ```
 
 ```{r}
+# Function to process categorical variables
+process_cat_variable <- function(variable_name) {
+ 
+   # Grabbing information from API
+  temp <- httr::GET(paste0("https://api.census.gov/data/2022/acs/acs1/pums/variables/", variable_name, ".json"))
+  temp_list <- temp$content |> rawToChar() |> jsonlite::fromJSON()
+  
+  # Getting just the variable names and their values
+  cat_values <- temp_list$values$item
+  cat_vals_sorted <- cat_values[sort(names(cat_values))]
+  
+  # Converting the values into a tibble
+  cat_tibble <- tibble(id = seq(0, length(cat_vals_sorted) - 1), value = cat_vals_sorted)
+  cat_vector <- cat_tibble$value
+  
+  return(cat_vector)
+}
+
+#Running function for categorical variables to store levels
+SCHL_levels <- process_cat_variable("SCHL")
+SEX_levels <- process_cat_variable("SEX")
+SCH_levels <- process_cat_variable("SCH")
+JWTRNS_levels <- process_cat_variable("JWTRNS")
+HISPEED_levels <- process_cat_variable("HISPEED")
+HHL_levels <- process_cat_variable("HHL")
+FER_levels <- process_cat_variable("FER")
+```
+
+```{r}
 # Add comments
 .get_pums_tibble <- function(url, show_call = FALSE) {
   if (isTRUE(show_call)) print(paste("PUMS URL:", url))
@@ -345,6 +374,10 @@ JWDP_intervals <- JWDP_intervals |>
   tibble::as_tibble(df, .name_repair = "minimal")
 }
 
+
+```
+
+```{r}
 
 ```
 
@@ -382,8 +415,8 @@ query_multiple_years <- function(
     geography_level = "All",
     geography_subset = NULL,
     survey = "acs1",
-    key = NULL
-) {
+    key = NULL)
+  {
   all_years_data <- list()
  
   for (yr in years) {
@@ -404,8 +437,12 @@ query_multiple_years <- function(
       key = key
     )
    
-    # Fetch tibble for this year
-    tbl <- .get_pums_tibble(url, show_call = TRUE)
+    # Fetch raw API response
+    resp <- httr::GET(url)
+    httr::stop_for_status(resp)
+   
+    # Process into cleaned tibble
+    tbl <- process_api_response(resp)
    
     # Add year column so you know which year rows came from
     tbl$year <- yr
