@@ -8,30 +8,26 @@ editor: visual
 
 The American Community Survey's Public Use Microdata Sample (ACS PUMS) via the Census API releases data that we want to develop into a robust and reprodubicle pipeline for aquiring person-level data. We want to functionalize the process so we can repeat the API calls and return them in a clean and useable format. We construct a pipeline, inhest the JSON formatted data into a tabluar format suitable for downstream web based graphics in an automated fashion.
 
-We approach this through three pillars:
-1) Validation
-2) API subsetting of data
-3) Functionalization of Component Code
-
+We approach this through three pillars: 1) Validation 2) API subsetting of data 3) Functionalization of Component Code
 
 ## What are we Building
 
-
 ## Assumptions and Data Guardrails
 
-
-
-
-##
-
-
+## 
 
 ```{r}
+
 library(httr)
 library(jsonlite)
 library(tibble)
 library(dplyr)
 library(ggplot2)
+library(tidyr)
+library(readr)
+library(hms)
+library(lubridate)
+
 
 ```
 
@@ -40,13 +36,14 @@ library(ggplot2)
 .load_pums_url <- function(year = 2023,
                            numeric_vars = c("AGEP"),
                            categorical_vars = c("SEX"),
-                           geography = c("All","Region","Division","State"),
-                           subset = list(),
+                           geography_level = c("All","Region","Division","State"),
+                           geography_subset = list(),
                            survey = "acs1",
                            key = NULL) {
 
-  geography <- match.arg(geography)
-    key_safe  <- if (is.null(key)) "" else as.character(key)
+  geography <- match.arg(geography_level)
+  subset    <- geography_subset
+  key_safe  <- if (is.null(key)) "" else as.character(key)
 
 # --- simple constants ---------------------------------------------------------
 .valid_numeric     <- c("AGEP", "GASP", "GRPIP", "JWAP", "JWDP", "JWMNP", "PWGTP")
@@ -157,7 +154,7 @@ validate_subset <- function(subset, geography) {
 print(paste("year =", year))
 print(paste("numeric_vars =", paste(numeric_vars, collapse = ", ")))
 print(paste("categorical_vars =", paste(categorical_vars, collapse = ", ")))
-print(paste("geo =", geo))
+print(paste("geo =", geography))
 print(paste("subset =", subset))
 print(paste("key =", if (nzchar(key)) "Avaiable" else "Missing"))
   
@@ -176,13 +173,196 @@ httr::modify_url(base, query = params)
 
 }
 
+
+
+```
+
+```{r}
+process_api_response <- function(api_response) {
+  if (api_response$status_code != 200) {
+    stop("Error: API request failed with status code ", api_response$status_code)
+  }
+
+  # Convert raw content to character string
+  content_string <- rawToChar(api_response$content)
+  
+  # Parse JSON data
+  parsed_data <- fromJSON(content_string)
+  
+  # First row contains column names, the rest is the data
+  column_names <- parsed_data[1, ]
+  data_rows <- parsed_data[-1, ]
+  
+  # Convert to tibble
+  tibble_data <- as_tibble(data_rows)
+  colnames(tibble_data) <- column_names
+  
+  #creating new variable in order to check if variables are numeric
+  valid_numeric_vars <- c("AGEP", "GASP", "GRPIP", "JWAP", "JWDP", "JWMNP", "PWGTP")
+   
+  #Created loop to convert proper numeric variables to numeric
+  for(var in colnames(tibble_data)){
+    if(var %in% valid_numeric_vars){
+      tibble_data[[var]] <- as.numeric(tibble_data[[var]])
+    }
+  }
+  
+  # --- categorical to factors ---------------------------------------------------
+  valid_categorical_vars <- c("FER", "HHL", "HISPEED", "JWTRNS", "SCH", "SCHL", "SEX")
+  for (var in colnames(tibble_data)) {
+    if (var %in% valid_categorical_vars) {
+      tibble_data[[var]] <- as.factor(tibble_data[[var]])
+    }
+  }
+
+  # --- labeled factors ----------------------------------------------------------
+  if ("SEX" %in% colnames(tibble_data)) {
+    tibble_data <- tibble_data |> mutate(SEX = factor(SEX, labels = SEX_levels))
+  }
+  if ("SCHL" %in% colnames(tibble_data)) {
+    tibble_data <- tibble_data |> mutate(SCHL = factor(SCHL, labels = SCHL_levels))
+  }
+  if ("SCH" %in% colnames(tibble_data)) {
+    tibble_data <- tibble_data |> mutate(SCH = factor(SCH, labels = SCH_levels))
+  }
+  if ("JWTRNS" %in% colnames(tibble_data)) {
+    tibble_data <- tibble_data |> mutate(JWTRNS = factor(JWTRNS, labels = JWTRNS_levels))
+  }
+  if ("HISPEED" %in% colnames(tibble_data)) {
+    tibble_data <- tibble_data |> mutate(HISPEED = factor(HISPEED, labels = HISPEED_levels))
+  }
+  if ("HHL" %in% colnames(tibble_data)) {
+    tibble_data <- tibble_data |> mutate(HHL = factor(HHL, labels = HHL_levels))
+  }
+  if ("FER" %in% colnames(tibble_data)) {
+    tibble_data <- tibble_data |> mutate(FER = factor(FER, labels = FER_levels))
+  }
+
+  # --- JWAP / JWDP handling -----------------------------------------------------
+  if("JWAP" %in% colnames(tibble_data)) {
+  tibble_data <- tibble_data |>
+   left_join(JWAP_intervals, join_by(JWAP)) |>
+    rename(work_arrival_time = middle_time,
+           arrival_meridiem = meridiem) |>
+    select(-JWAP)
+  } 
+  
+  #Pasting correct time values in for JWDP
+   if("JWDP" %in% colnames(tibble_data)) {
+  tibble_data <- tibble_data |>
+   left_join(JWDP_intervals, join_by(JWDP)) |>
+    rename(work_departure_time = middle_time2,
+           departure_meridiem = meridiem2) |>
+    select(-JWDP)
+  } 
+
+  return(tibble_data)
+}
+
+```
+
+```{r}
+# Function to process time variables
+process_time_variable <- function(variable_name) {
+ 
+   # Grabbing information from API
+  temp <- httr::GET(paste0("https://api.census.gov/data/2022/acs/acs1/pums/variables/", variable_name, ".json"))
+  temp_list <- temp$content |> rawToChar() |> jsonlite::fromJSON()
+  
+  # Getting just the variable names and their values
+  time_values <- temp_list$values$item
+  time_vals_sorted <- time_values[sort(names(time_values))]
+  
+  # Converting the values into a tibble
+  time_tibble <- tibble(id = seq(0, length(time_vals_sorted) - 1), value = time_vals_sorted)
+  
+  # Converting to wide format
+  time_wide <- separate_wider_delim(time_tibble, 
+                                     cols = c("value"), 
+                                     delim = " ", 
+                                     names = c("start", "meridiem", "to", "end", "meridiem_2"), 
+                                     too_few = "debug", 
+                                     names_repair = "unique", 
+                                     too_many = "drop") 
+  
+  # Select the needed rows and convert to usable format
+  time_intervals <- time_wide |>
+    select(id, start, meridiem, end, meridiem_2) |> #meridiem is to track if values were for am or pm
+    mutate(start = parse_hm(start),
+           end = parse_hm(end),
+           variable_name = id)  
+  
+  # Make row 1 display NA across all columns for row 1    
+  time_intervals[1, ] <- NA
+  
+  # Creating middle time value variable
+  time_intervals <- time_intervals |>
+    mutate(interval = (end - start) / 2,
+           interval = as.numeric(interval),
+           interval = as.period(interval))
+
+  # Turning start into a period   
+  time_intervals <- time_intervals |>
+    mutate(start = as.period(start),
+           middle_time = as.duration(start + interval)) |>
+    select(middle_time, variable_name, meridiem) 
+  
+  # Turning the first row variable back to 0
+  time_intervals[1, 2] <- 0
+          
+  # Converting back to a time variable        
+  time_intervals <- time_intervals |>
+    mutate(middle_time = hms::hms(seconds = middle_time))
+  
+  return(time_intervals)
+} 
+
+#Renaming variables to insure they work in the helper function
+JWAP_intervals <- process_time_variable("JWAP")
+JWAP_intervals <- JWAP_intervals |>
+  rename(JWAP = variable_name)
+         
+JWDP_intervals <- process_time_variable("JWDP")
+JWDP_intervals <- JWDP_intervals |>
+  rename(JWDP = variable_name,
+         middle_time2 = middle_time,
+         meridiem2 = meridiem)
+
+```
+
+```{r}
+# Function to process categorical variables
+process_cat_variable <- function(variable_name) {
+ 
+   # Grabbing information from API
+  temp <- httr::GET(paste0("https://api.census.gov/data/2022/acs/acs1/pums/variables/", variable_name, ".json"))
+  temp_list <- temp$content |> rawToChar() |> jsonlite::fromJSON()
+  
+  # Getting just the variable names and their values
+  cat_values <- temp_list$values$item
+  cat_vals_sorted <- cat_values[sort(names(cat_values))]
+  
+  # Converting the values into a tibble
+  cat_tibble <- tibble(id = seq(0, length(cat_vals_sorted) - 1), value = cat_vals_sorted)
+  cat_vector <- cat_tibble$value
+  
+  return(cat_vector)
+}
+
+#Running function for categorical variables to store levels
+SCHL_levels <- process_cat_variable("SCHL")
+SEX_levels <- process_cat_variable("SEX")
+SCH_levels <- process_cat_variable("SCH")
+JWTRNS_levels <- process_cat_variable("JWTRNS")
+HISPEED_levels <- process_cat_variable("HISPEED")
+HHL_levels <- process_cat_variable("HHL")
+FER_levels <- process_cat_variable("FER")
 ```
 
 ```{r}
 # Add comments
 .get_pums_tibble <- function(url, show_call = FALSE) {
   if (isTRUE(show_call)) print(paste("PUMS URL:", url))
-
 
   resp <- httr::GET(url)
   httr::stop_for_status(resp)
@@ -194,10 +374,15 @@ httr::modify_url(base, query = params)
   tibble::as_tibble(df, .name_repair = "minimal")
 }
 
+
 ```
 
 ```{r}
-year <- 2023
+
+```
+
+```{r}
+year <- 2022
 numeric_vars <- c("AGEP", "JWMNP")
 categorical_vars <- c("SEX")
 geography <- "State"            
@@ -208,8 +393,8 @@ url <- .load_pums_url(
   year = year,
   numeric_vars = numeric_vars,
   categorical_vars = categorical_vars,
-  geography = geography,
-  subset = subset,
+  geography_level = geography,
+  geography_subset = subset,
   survey = "acs1",
   key = key
 )
@@ -218,9 +403,10 @@ tbl <- .get_pums_tibble(url, show_call = TRUE)
 
 print(tbl)
 
+
 ```
 
-{r}
+```{r}
 # Function for multiple years
 query_multiple_years <- function(
     years,
@@ -229,8 +415,8 @@ query_multiple_years <- function(
     geography_level = "All",
     geography_subset = NULL,
     survey = "acs1",
-    key = NULL
-) {
+    key = NULL)
+  {
   all_years_data <- list()
  
   for (yr in years) {
@@ -251,8 +437,12 @@ query_multiple_years <- function(
       key = key
     )
    
-    # Fetch tibble for this year
-    tbl <- .get_pums_tibble(url, show_call = TRUE)
+    # Fetch raw API response
+    resp <- httr::GET(url)
+    httr::stop_for_status(resp)
+   
+    # Process into cleaned tibble
+    tbl <- process_api_response(resp)
    
     # Add year column so you know which year rows came from
     tbl$year <- yr
@@ -268,15 +458,18 @@ query_multiple_years <- function(
   return(final_data)
 }
 
-{r}
-year <- c( 2016, 2017, 2018)
+```
+
+```{r}
+#year <- c( 2016, 2017, 2018)
+year <- c( 2016, 2017)
 numeric_vars <- c("AGEP", "PWGTP", "JWAP", "GRPIP" )
 categorical_vars <- c("SEX", "HISPEED", "SCH", "FER")
 geography <- "State"            
 subset <- list(ST = c(37, 36))  
 key <- "2c10d8b7f4f3ca11ddef8ced42f41817fa34d9f7"
 
-url <- query_multiple_years(
+multi_year_result <- query_multiple_years(
   year = year,
   numeric_vars = numeric_vars,
   categorical_vars = categorical_vars,
@@ -290,22 +483,87 @@ tbl <- .get_pums_tibble(url, show_call = TRUE)
 
 print(tbl)
 
+```
 
+```{r}
+# Define custom summary function for the 'census' class
+summary.census <- function(census_data, 
+                           numeric_vars = NULL, 
+                           categorical_vars = NULL) {
+  
+  # Ensure PWGTP exists and is numeric
+  if (!"PWGTP" %in% names(census_data)) {
+    stop("Weight variable 'PWGTP' is missing from the dataset.")
+  }
+  
+  # Separate numeric and categorical columns from the data
+  if (is.null(numeric_vars)) {
+    numeric_vars <- names(census_data)[sapply(census_data, is.numeric) & names(census_data) != "PWGTP"]
+  }
+  
+  if (is.null(categorical_vars)) {
+    categorical_vars <- names(census_data)[sapply(census_data, is.factor)]
+  }
+  # Weighted mean and standard deviation calculations
+  summarize_numeric <- function(var_name, data) {
+    numeric_vector <- as.numeric(data[[var_name]])
+    weight_vector <- as.numeric(data[["PWGTP"]])
+    
+    # Check for missing values in the weight vector
+    if (any(is.na(weight_vector))) {
+      stop("Missing values found in the weight variable 'PWGTP'.")
+    }
+    
+    # Calculate weighted mean
+    weighted_mean <- sum(numeric_vector * weight_vector, na.rm = TRUE) / sum(weight_vector, na.rm = TRUE)
+    
+    # Calculate weighted standard deviation
+    weighted_var <- sum(numeric_vector^2 * weight_vector, na.rm = TRUE) / sum(weight_vector, na.rm = TRUE)
+    weighted_sd <- sqrt(weighted_var - weighted_mean^2)
+    
+    return(list(mean = weighted_mean, sd = weighted_sd))
+  }
+  
+  # Initialize a list to store the summary results
+  summary_list <- list()
+  
+  # Summarize numeric variables
+  for (var in numeric_vars) {
+    summary_list[[var]] <- summarize_numeric(var, census_data)
+  }
+  
+  # Summarize categorical variables (counts)
+  for (var in categorical_vars) {
+    summary_list[[var]] <- table(census_data[[var]], useNA = "ifany")
+  }
+  
+  return(summary_list)
+}
+```
 
+```{r}
+#Creating function for user to create weighted box plots
+plot.census <- function(tibble_data, categorical_var, numeric_var) {
+  
+  #Telling user they must specify at least one categorical variable
+  if (missing(categorical_var) || missing(numeric_var)){
+    stop("Must include one categorical variable and one numeric variable")
+  }
+  #Telling user time variables can not be use as numeric variables
+  if ("JWAP" %in% numeric_var){
+    stop("JWAP is a time variable")
+  }
+   if ("JWDP" %in% numeric_var){
+    stop("JWDP is a time variable")
+  }
+  
+  p <- ggplot(tibble_data, 
+              aes(x = get(categorical_var), y = get(numeric_var), weight = PWGTP)) + geom_boxplot() + 
+                labs(title = paste("Box plot of", deparse(substitute(categorical_var)), "by", deparse(substitute(numeric_var))), x = categorical_var, y = numeric_var) + theme_light() 
+  
+  print(p)
+}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+#Plot example
+plot.census(multi_year_result, "SEX", "AGEP")
+```
