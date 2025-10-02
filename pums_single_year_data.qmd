@@ -8,13 +8,46 @@ editor: visual
 
 The American Community Survey's Public Use Microdata Sample (ACS PUMS) via the Census API releases data that we want to develop into a robust and reprodubicle pipeline for aquiring person-level data. We want to functionalize the process so we can repeat the API calls and return them in a clean and useable format. We construct a pipeline, inhest the JSON formatted data into a tabluar format suitable for downstream web based graphics in an automated fashion.
 
-We approach this through three pillars: 1) Validation 2) API subsetting of data 3) Functionalization of Component Code
+We approach this through three pillars: 
+1) Validation: For inputs and API components. 
+2) API Subsetting: For data to maximize workflows and analysis. 
+3) Functionalization: Around components and pipelines.
+
+Our end goal remains a small production style foundation for nascent data exploration and analysis. APIs typically bring tremedouns functionality to organizations. However, there are many instances where too much data or functions can impact the data analysis and thus the statistical work in which we need to build.
 
 ## What are we Building
+We are delivering a package style R foundation for data exploration and analysis. Our code does:
+1) Writes valid API URLs to API data querying.
+2) Pulls JSON payloads and converts to formatted tibbles.
+3) Applies respective survey weights in plottting function.
+4) Develops helper functions to assist in data formatting, aggregation and querying.
+5) Scales to years and georgraphies relative to data requirements.
 
-## Assumptions and Data Guardrails
 
-## 
+## Key Architecture Features
+1) URL Functions
+2) Input Helpers/Functions
+3) Plotting Functions
+
+
+## Assumptions 
+Years Allowed: Only allows for year ranges of 2010-2022 and throws an error if not.
+Surveys: Single yeatr estimates preffered.
+Variables: Numeric variables requested.
+Geography: Specific code for region and time weights.
+
+## High-Level Motivation
+We built this pipeline to demonstrate how to turn the ACS PUMS endpints into a reproducible dataset suitablke for data exploration and analysis. We have enforced input validations by factoring URL and standarizing the JSON payloads. These pieces get passed into the tibble includuing factors, weights and other attributes. We have created this in a transparent manner via Guthub to show the larger thinking and development process. 
+
+
+
+
+
+Sources:
+Data: U.S. Census Bureau. ACS PUMS Microdata
+
+
+
 
 ```{r}
 
