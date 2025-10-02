@@ -8,46 +8,29 @@ editor: visual
 
 The American Community Survey's Public Use Microdata Sample (ACS PUMS) via the Census API releases data that we want to develop into a robust and reprodubicle pipeline for aquiring person-level data. We want to functionalize the process so we can repeat the API calls and return them in a clean and useable format. We construct a pipeline, inhest the JSON formatted data into a tabluar format suitable for downstream web based graphics in an automated fashion.
 
-We approach this through three pillars: 
-1) Validation: For inputs and API components. 
-2) API Subsetting: For data to maximize workflows and analysis. 
-3) Functionalization: Around components and pipelines.
+We approach this through three pillars: 1) Validation: For inputs and API components. 2) API Subsetting: For data to maximize workflows and analysis. 3) Functionalization: Around components and pipelines.
 
 Our end goal remains a small production style foundation for nascent data exploration and analysis. APIs typically bring tremedouns functionality to organizations. However, there are many instances where too much data or functions can impact the data analysis and thus the statistical work in which we need to build.
 
 ## What are we Building
-We are delivering a package style R foundation for data exploration and analysis. Our code does:
-1) Writes valid API URLs to API data querying.
-2) Pulls JSON payloads and converts to formatted tibbles.
-3) Applies respective survey weights in plottting function.
-4) Develops helper functions to assist in data formatting, aggregation and querying.
-5) Scales to years and georgraphies relative to data requirements.
 
+We are delivering a package style R foundation for data exploration and analysis. Our code does: 1) Writes valid API URLs to API data querying. 2) Pulls JSON payloads and converts to formatted tibbles. 3) Applies respective survey weights in plottting function. 4) Develops helper functions to assist in data formatting, aggregation and querying. 5) Scales to years and georgraphies relative to data requirements.
 
 ## Key Architecture Features
-1) URL Functions
-2) Input Helpers/Functions
-3) Plotting Functions
 
+1)  URL Functions
+2)  Input Helpers/Functions
+3)  Plotting Functions
 
-## Assumptions 
-Years Allowed: Only allows for year ranges of 2010-2022 and throws an error if not.
-Surveys: Single yeatr estimates preffered.
-Variables: Numeric variables requested.
-Geography: Specific code for region and time weights.
+## Assumptions
+
+Years Allowed: Only allows for year ranges of 2010-2022 and throws an error if not. Surveys: Single yeatr estimates preffered. Variables: Numeric variables requested. Geography: Specific code for region and time weights.
 
 ## High-Level Motivation
-We built this pipeline to demonstrate how to turn the ACS PUMS endpints into a reproducible dataset suitablke for data exploration and analysis. We have enforced input validations by factoring URL and standarizing the JSON payloads. These pieces get passed into the tibble includuing factors, weights and other attributes. We have created this in a transparent manner via Guthub to show the larger thinking and development process. 
 
+We built this pipeline to demonstrate how to turn the ACS PUMS endpints into a reproducible dataset suitablke for data exploration and analysis. We have enforced input validations by factoring URL and standarizing the JSON payloads. These pieces get passed into the tibble includuing factors, weights and other attributes. We have created this in a transparent manner via Guthub to show the larger thinking and development process.
 
-
-
-
-Sources:
-Data: U.S. Census Bureau. ACS PUMS Microdata
-
-
-
+Sources: Data: U.S. Census Bureau. ACS PUMS Microdata
 
 ```{r}
 
@@ -499,7 +482,7 @@ year <- c( 2016, 2017)
 numeric_vars <- c("AGEP", "PWGTP", "JWAP", "GRPIP" )
 categorical_vars <- c("SEX", "HISPEED", "SCH", "FER")
 geography <- "State"            
-subset <- list(ST = c(37, 36))  
+subset <- list(ST = c(50, 56))  
 key <- "2c10d8b7f4f3ca11ddef8ced42f41817fa34d9f7"
 
 multi_year_result <- query_multiple_years(
@@ -597,6 +580,11 @@ plot.census <- function(tibble_data, categorical_var, numeric_var) {
   print(p)
 }
 
-#Plot example
-plot.census(multi_year_result, "SEX", "AGEP")
+# Take a reproducible sample of 10,000 rows
+set.seed(123)   # ensures reproducibility
+multi_year_sample <- dplyr::sample_n(multi_year_result, 100000)
+
+# Now plot using the sample
+plot.census(multi_year_sample, "SEX", "AGEP")
+#plot.census(multi_year_result, "SEX", "AGEP")
 ```
