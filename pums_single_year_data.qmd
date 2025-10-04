@@ -53,12 +53,12 @@ library(lubridate)
                            numeric_vars = c("AGEP"),
                            categorical_vars = c("SEX"),
                            geography_level = c("All","Region","Division","State"),
-                           geography_subset = list(),
+                           geography_subset = list(ST = 1),
                            survey = "acs1",
                            key = NULL) {
 
   geography <- match.arg(geography_level)
-  subset    <- geography_subset
+  subset <- geography_subset
   key_safe  <- if (is.null(key)) "" else as.character(key)
 
 # --- simple constants ---------------------------------------------------------
