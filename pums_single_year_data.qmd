@@ -49,7 +49,7 @@ library(lubridate)
 
 ```
 
-### Helper Function 
+### Helper Function
 
 Helper function builds the Census API URL for us. Instead of manually typing out long, messy API calls, this function takes in things like year, numeric variables, categorical variables, and geography level, then puts it all together into a clean URL we can query. Behind the scenes, it does a few extra checks to make sure we don’t accidentally ask for something invalid. For example, it only allows survey years between 2010–2022, makes sure PWGTP (the weight variable) is always included, and confirms that any geographic subsets match up with the type of geography we picked (like not mixing up Region codes with State FIPS codes). By default, we set the geography subset to state code 01 (Alabama), since our group was assigned that state. But the user can always override this if they want to look at a different state. In short: this function keeps our queries valid, reproducible, and a lot less error-prone. We’ll lean on it every time we want to pull in new PUMS data.
 
@@ -203,7 +203,7 @@ httr::modify_url(base, query = params)
 
 ```
 
-### Processing the API Response 
+### Processing the API Response
 
 Once the URL pulls back results, we need a way to turn the raw API response into something useful. The process_api_response() function does exactly that. First, it checks if the request worked (status code 200). Then it takes the raw JSON content, pulls out the column names, and builds a tibble we can work with. From there, it automatically converts numeric variables into numbers, categorical variables into factors with the right labels, and even does some extra cleanup for special cases like commute times (JWAP and JWDP). Basically, this function transforms messy JSON into a clean, analysis-ready dataset in one step — so we don’t have to deal with parsing and fixing every time we pull new data.
 
@@ -363,7 +363,7 @@ JWDP_intervals <- JWDP_intervals |>
 
 ```
 
-### Categorical Variable Helper 
+### Categorical Variable Helper
 
 Similarly, categorical variables come in as numeric codes that don’t mean much by themselves. The process_cat_variable() function looks up the dictionary of values for each categorical variable (like SEX, SCHL, HISPEED, etc.) and returns the proper labels. That way, instead of staring at “1” and “2” for gender, we immediately see “Male” and “Female.” This small step makes plots, summaries, and any kind of interpretation way more readable.
 
@@ -443,7 +443,7 @@ print(tbl)
 
 ```
 
-### Query multiple years data 
+### Query multiple years data
 
 Now that we have validated that our query is working properly we now need to add on the ability for the user to query multiple years. In order to do this we will make a new query function that creates a loop for each year as specified by the user, and runs said loop through our initial query function in order to get data for each year. This new year data will be added to our tibble with the bind_rows() function.
 
@@ -528,7 +528,7 @@ print(tbl)
 
 ```
 
-### Summary Function 
+### Summary Function
 
 The summary.census() function is our custom summary tool for any tibble that comes back from the Census API. By default, it calculates weighted means and standard deviations for numeric variables (like age or commute minutes) and counts for categorical ones (like sex or education level). The key part is the weights: the Census uses PWGTP to scale each record up to the population level. Without it, our summaries would be misleading. This function bakes the weighting logic in, so every summary we produce reflects actual population estimates, not just the raw sample.
 
@@ -592,7 +592,7 @@ summary.census <- function(census_data,
 }
 ```
 
-### Plotting Function 
+### Plotting Function
 
 Finally, we wrote a plot.census() function to visualize the data. It makes a weighted boxplot for any numeric variable by any categorical variable, using the survey weights in the background. This keeps the plots aligned with how the Census wants the data to be represented. Together with the summary function, this gives us a quick way to explore patterns in the data without having to rewrite ggplot code every time.
 
@@ -624,12 +624,12 @@ plot.census <- function(tibble_data, categorical_var, numeric_var) {
 
 ```{r}
 # Take a reproducible sample of 10,000 rows
-#set.seed(123)   # ensures reproducibility
-#multi_year_sample <- dplyr::sample_n(multi_year_result, 1000)
+set.seed(123)   # ensures reproducibility
+multi_year_sample <- dplyr::sample_n(multi_year_result, 100000)
 
 # Now plot using the sample
-#plot.census(multi_year_sample, "SEX", "AGEP")
-plot.census(multi_year_result, "SEX", "AGEP")
+plot.census(multi_year_sample, "SEX", "AGEP")
+#plot.census(multi_year_result, "SEX", "AGEP")
 ```
 
 ### Census API Investigation
@@ -664,12 +664,12 @@ commute_summary
 
 ```{r}
 # Weighted boxplot of commute minutes by sex
-#set.seed(234)   # ensures reproducibility
-#commute_query_sample <- dplyr::sample_n(commute_query, 1000)
+set.seed(234)   # ensures reproducibility
+commute_query_sample <- dplyr::sample_n(commute_query, 100000)
 
 # Now plot using the sample
-#plot.census(commute_query_sample, "SEX", "JWMNP")
-plot.census(commute_query, "SEX", "JWMNP")
+plot.census(commute_query_sample, "SEX", "JWMNP")
+#plot.census(commute_query, "SEX", "JWMNP")
 ```
 
 From the weighted summary, we can see the mean and standard deviation of commute minutes for men and women, properly adjusted with the `PWGTP` weights. This ensures the values represent the population, not just the raw sample.
