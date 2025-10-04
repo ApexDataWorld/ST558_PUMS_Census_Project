@@ -26,6 +26,8 @@ We are delivering a package style R foundation for data exploration and analysis
 
 Years Allowed: Only allows for year ranges of 2010-2022 and throws an error if not. Surveys: Single yeatr estimates preffered. Variables: Numeric variables requested. Geography: Specific code for region and time weights.
 
+**Note:** The U.S. Census Bureau did not release 2020 one-year ACS PUMS data due to pandemic-related sampling disruptions. Therefore, our functions restrict valid years to 2010–2019 and 2021–2022.
+
 ## High-Level Motivation
 
 We built this pipeline to demonstrate how to turn the ACS PUMS endpints into a reproducible dataset suitablke for data exploration and analysis. We have enforced input validations by factoring URL and standarizing the JSON payloads. These pieces get passed into the tibble includuing factors, weights and other attributes. We have created this in a transparent manner via Guthub to show the larger thinking and development process.
@@ -33,7 +35,7 @@ We built this pipeline to demonstrate how to turn the ACS PUMS endpints into a r
 Sources: Data: U.S. Census Bureau. ACS PUMS Microdata
 
 ```{r}
-
+#Loading librarites required in the project work 
 library(httr)
 library(jsonlite)
 library(tibble)
@@ -46,6 +48,10 @@ library(lubridate)
 
 
 ```
+
+### Helper Function 
+
+Helper function builds the Census API URL for us. Instead of manually typing out long, messy API calls, this function takes in things like year, numeric variables, categorical variables, and geography level, then puts it all together into a clean URL we can query. Behind the scenes, it does a few extra checks to make sure we don’t accidentally ask for something invalid. For example, it only allows survey years between 2010–2022, makes sure PWGTP (the weight variable) is always included, and confirms that any geographic subsets match up with the type of geography we picked (like not mixing up Region codes with State FIPS codes). By default, we set the geography subset to state code 01 (Alabama), since our group was assigned that state. But the user can always override this if they want to look at a different state. In short: this function keeps our queries valid, reproducible, and a lot less error-prone. We’ll lean on it every time we want to pull in new PUMS data.
 
 ```{r}
 # Build API URL with server‑side filters
@@ -79,16 +85,20 @@ library(lubridate)
   is.numeric(x) && length(x) == 1L && !is.na(x) && x >= 2010 && x <= 2022
 }
 
-#Added new version of function
+# Validate year 
 validate_year <- function(year) {
-  #creating a function to validate year
-  if (!(is.numeric(year) && length(year) == 1L && !is.na(year) && year >= 2010 && year <= 2022)) {
-    #this will throw an error if a year entered is not in range
-    stop("year must be a single number in 2010..2022", call. = FALSE)
-  }
-  #outputs year in integer format
+  if (!is.numeric(year) || year < 2010 || year > 2022)
+    stop("year must be between 2010 and 2022")
   as.integer(year)
 }
+
+
+# Skip unavailable variables by year
+if (year < 2019 && any(c("JWTRNS", "HISPEED") %in% categorical_vars)) {
+  warning("JWTRNS and HISPEED only available for 2019 - 2022. Removing them from this query.")
+  categorical_vars <- setdiff(categorical_vars, c("JWTRNS", "HISPEED"))
+}
+
 
 
 # --- variables ----------------------------------------------------------------
@@ -193,7 +203,12 @@ httr::modify_url(base, query = params)
 
 ```
 
+### Processing the API Response 
+
+Once the URL pulls back results, we need a way to turn the raw API response into something useful. The process_api_response() function does exactly that. First, it checks if the request worked (status code 200). Then it takes the raw JSON content, pulls out the column names, and builds a tibble we can work with. From there, it automatically converts numeric variables into numbers, categorical variables into factors with the right labels, and even does some extra cleanup for special cases like commute times (JWAP and JWDP). Basically, this function transforms messy JSON into a clean, analysis-ready dataset in one step — so we don’t have to deal with parsing and fixing every time we pull new data.
+
 ```{r}
+# Convert raw API JSON response to a clean tibble
 process_api_response <- function(api_response) {
   if (api_response$status_code != 200) {
     stop("Error: API request failed with status code ", api_response$status_code)
@@ -277,6 +292,8 @@ process_api_response <- function(api_response) {
 
 ```
 
+Handling Time Variables Some variables in the Census data represent time intervals instead of single values. For example, “time leaving for work” isn’t stored as “7:30 AM,” but rather as a range. Our process_time_variable() helper handles this problem by looking up those intervals, grabbing the start and end times, and calculating a middle point that represents the range. It then converts those values into something R can actually work with — proper time objects — so we can treat commute times consistently in our analysis. Without this step, plotting or comparing time data would be pretty much impossible.
+
 ```{r}
 # Function to process time variables
 process_time_variable <- function(variable_name) {
@@ -346,6 +363,10 @@ JWDP_intervals <- JWDP_intervals |>
 
 ```
 
+### Categorical Variable Helper 
+
+Similarly, categorical variables come in as numeric codes that don’t mean much by themselves. The process_cat_variable() function looks up the dictionary of values for each categorical variable (like SEX, SCHL, HISPEED, etc.) and returns the proper labels. That way, instead of staring at “1” and “2” for gender, we immediately see “Male” and “Female.” This small step makes plots, summaries, and any kind of interpretation way more readable.
+
 ```{r}
 # Function to process categorical variables
 process_cat_variable <- function(variable_name) {
@@ -393,9 +414,9 @@ FER_levels <- process_cat_variable("FER")
 
 ```
 
-```{r}
+### Query the API
 
-```
+Now that we have done some setup we need to start creating the function that will be accessing the API for us. The first step will be to provide some defaults for the year, numeric variables, categorical variables, and geography levels. Then we will include the functions that validate if the user chose the correct variables, after that we will create the base URL, then the paste function that will paste the choosen variables into the query. The GET() function will then be used to access the API and if that is successful the data will be processed with our helper function into a nice looking tibble.
 
 ```{r}
 year <- 2022
@@ -421,6 +442,10 @@ print(tbl)
 
 
 ```
+
+### Query multiple years data 
+
+Now that we have validated that our query is working properly we now need to add on the ability for the user to query multiple years. In order to do this we will make a new query function that creates a loop for each year as specified by the user, and runs said loop through our initial query function in order to get data for each year. This new year data will be added to our tibble with the bind_rows() function.
 
 ```{r}
 # Function for multiple years
@@ -476,6 +501,8 @@ query_multiple_years <- function(
 
 ```
 
+Testing the multi-year query to see if it is working correctly:
+
 ```{r}
 #year <- c( 2016, 2017, 2018)
 year <- c( 2016, 2017)
@@ -501,8 +528,15 @@ print(tbl)
 
 ```
 
+### Summary Function 
+
+The summary.census() function is our custom summary tool for any tibble that comes back from the Census API. By default, it calculates weighted means and standard deviations for numeric variables (like age or commute minutes) and counts for categorical ones (like sex or education level). The key part is the weights: the Census uses PWGTP to scale each record up to the population level. Without it, our summaries would be misleading. This function bakes the weighting logic in, so every summary we produce reflects actual population estimates, not just the raw sample.
+
 ```{r}
 # Define custom summary function for the 'census' class
+# Weighted summary function for census objects
+# Returns list with weighted means and SDs (numeric) and weighted counts (categorical)
+
 summary.census <- function(census_data, 
                            numeric_vars = NULL, 
                            categorical_vars = NULL) {
@@ -548,17 +582,22 @@ summary.census <- function(census_data,
     summary_list[[var]] <- summarize_numeric(var, census_data)
   }
   
-  # Summarize categorical variables (counts)
+  # Summarize categorical variables (weighted counts)
   for (var in categorical_vars) {
-    summary_list[[var]] <- table(census_data[[var]], useNA = "ifany")
+    w <- as.numeric(census_data$PWGTP)
+    summary_list[[var]] <- tapply(w, census_data[[var]], sum, na.rm = TRUE)
   }
   
   return(summary_list)
 }
 ```
 
+### Plotting Function 
+
+Finally, we wrote a plot.census() function to visualize the data. It makes a weighted boxplot for any numeric variable by any categorical variable, using the survey weights in the background. This keeps the plots aligned with how the Census wants the data to be represented. Together with the summary function, this gives us a quick way to explore patterns in the data without having to rewrite ggplot code every time.
+
 ```{r}
-#Creating function for user to create weighted box plots
+
 plot.census <- function(tibble_data, categorical_var, numeric_var) {
   
   #Telling user they must specify at least one categorical variable
@@ -580,11 +619,61 @@ plot.census <- function(tibble_data, categorical_var, numeric_var) {
   print(p)
 }
 
+
+```
+
+```{r}
 # Take a reproducible sample of 10,000 rows
-set.seed(123)   # ensures reproducibility
-multi_year_sample <- dplyr::sample_n(multi_year_result, 100000)
+#set.seed(123)   # ensures reproducibility
+#multi_year_sample <- dplyr::sample_n(multi_year_result, 1000)
 
 # Now plot using the sample
-plot.census(multi_year_sample, "SEX", "AGEP")
-#plot.census(multi_year_result, "SEX", "AGEP")
+#plot.census(multi_year_sample, "SEX", "AGEP")
+plot.census(multi_year_result, "SEX", "AGEP")
 ```
+
+### Census API Investigation
+
+Now that we have created our functions and API query, we can analyze some data.\
+In this example, we’ll explore **commute time patterns** in North Carolina using the variable **JWMNP** (commute minutes) and compare them by **SEX**.\
+This lets us investigate whether men and women have different average commute times or variability in travel behavior.
+
+```{r}
+# Investigation: Commute Times by Sex  
+
+# Query commute minutes by sex for 2022, NC (state FIPS 37 as example)
+commute_query <- query_multiple_years(
+  years = c(2022),    
+  numeric_vars = c("AGEP", "JWMNP", "PWGTP"),  
+  categorical_vars = c("SEX"),  
+  geography_level = "State",  
+  geography_subset = list(ST = 37),  # NC (FIPS 37)
+  survey = "acs1",
+  key = "2c10d8b7f4f3ca11ddef8ced42f41817fa34d9f7"
+)
+
+# Weighted summary of commute times by sex
+commute_summary <- summary.census(commute_query, 
+                                  numeric_vars = c("JWMNP"),
+                                  categorical_vars = c("SEX"))
+commute_summary
+
+
+
+```
+
+```{r}
+# Weighted boxplot of commute minutes by sex
+#set.seed(234)   # ensures reproducibility
+#commute_query_sample <- dplyr::sample_n(commute_query, 1000)
+
+# Now plot using the sample
+#plot.census(commute_query_sample, "SEX", "JWMNP")
+plot.census(commute_query, "SEX", "JWMNP")
+```
+
+From the weighted summary, we can see the mean and standard deviation of commute minutes for men and women, properly adjusted with the `PWGTP` weights. This ensures the values represent the population, not just the raw sample.
+
+From the summary, the mean commute time in North Carolina is approximately **10.8 minutes**, with a standard deviation of **19.3 minutes**, indicating a wide spread in commute durations. The weighted counts show that the ACS PUMS data represent about **1.66 million males** and **1.72 million females** in the population. These are **weighted population estimates**, not raw sample sizes, because each observation is scaled using the Census **PWGTP** person weight.
+
+The weighted boxplot gives a visual comparison of commute times across sexes. The medians are often similar, but the spread can differ: in many states, one group shows slightly more long-distance commuters, reflected in the longer tails of the boxplot.
